@@ -11,9 +11,6 @@ class TestPaymentOrderOutbound(TransactionCase):
 
     def setUp(self):
         super(TestPaymentOrderOutbound, self).setUp()
-        self.journal = self.env['account.journal'].search(
-            [('type', '=', 'bank')], limit=1
-        )
         self.invoice_line_account = self.env['account.account'].search(
             [('user_type_id', '=', self.env.ref(
                 'account.data_account_type_expenses').id)],
@@ -22,10 +19,27 @@ class TestPaymentOrderOutbound(TransactionCase):
         self.invoice_02 = self._create_supplier_invoice()
         self.mode = self.env.ref(
             'account_payment_mode.payment_mode_outbound_ct1')
+        self.mode.default_journal_ids = self.env['account.journal'].search([
+            ('type', 'in', ('purchase', 'purchase_refund')),
+            ('company_id', '=', self.env.user.company_id.id)
+        ])
         self.creation_mode = self.env.ref(
             'account_payment_mode.payment_mode_outbound_dd1')
+        self.creation_mode.default_journal_ids = (
+            self.env['account.journal'].search([
+                ('type', 'in', ('sale', 'sale_refund')),
+                ('company_id', '=', self.env.user.company_id.id)
+            ]))
         self.bank_journal = self.env['account.journal'].search(
-            [('type', '=', 'bank')], limit=1)
+            [('type', '=', 'bank'),
+             '|', ('company_id', '=', self.env.user.company_id.id),
+             ('company_id', '=', False)], limit=1)
+        # Make sure no other payment orders are in the DB
+        self.domain = [
+            ('state', '=', 'draft'),
+            ('payment_type', '=', 'outbound'),
+        ]
+        self.env['account.payment.order'].search(self.domain).unlink()
 
     def _create_supplier_invoice(self):
         invoice_account = self.env['account.account'].search(
@@ -136,15 +150,20 @@ class TestPaymentOrderOutbound(TransactionCase):
             active_ids=self.invoice.ids
         ).create({}).run()
 
+<<<<<<< HEAD
         payment_order = self.env['account.payment.order'].search([])
         self.assertEqual(len(payment_order.ids), 1)
         bank_journal = self.env['account.journal'].search(
             [('type', '=', 'bank')], limit=1)
+=======
+        payment_order = self.env['account.payment.order'].search(self.domain)
+        self.assertEqual(len(payment_order), 1)
+>>>>>>> a8c574b4... [FIX] 12.0 make account_payment_order_inbound test multicompany resilient
         # Set journal to allow cancelling entries
-        bank_journal.update_posted = True
+        self.bank_journal.update_posted = True
 
         payment_order.write({
-            'journal_id': bank_journal.id,
+            'journal_id': self.bank_journal.id,
         })
 
         self.assertEqual(len(payment_order.payment_line_ids), 1)
@@ -177,7 +196,7 @@ class TestPaymentOrderOutbound(TransactionCase):
         outbound_order = self.env['account.payment.order'].create({
             'payment_type': 'outbound',
             'payment_mode_id': self.mode.id,
-            'journal_id': self.journal.id,
+            'journal_id': self.bank_journal.id,
         })
         with self.assertRaises(ValidationError):
             outbound_order.date_scheduled = date.today() - timedelta(
