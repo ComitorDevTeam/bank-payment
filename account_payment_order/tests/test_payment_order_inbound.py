@@ -2,54 +2,69 @@
 # © 2017 Creu Blanca
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
-from odoo.tests.common import TransactionCase
+from odoo.tests.common import SavepointCase
 from odoo.exceptions import ValidationError, UserError
 from datetime import date, timedelta
 
 
-class TestPaymentOrderInbound(TransactionCase):
-
-    def setUp(self):
-        super(TestPaymentOrderInbound, self).setUp()
-        self.inbound_mode = self.browse_ref(
+class TestPaymentOrderInboundBase(SavepointCase):
+    @classmethod
+    def setUpClass(cls):
+        super(TestPaymentOrderInboundBase, cls).setUpClass()
+        cls.inbound_mode = cls.env.ref(
             'account_payment_mode.payment_mode_inbound_dd1'
         )
-        self.invoice_line_account = self.env['account.account'].search(
-            [('user_type_id', '=', self.env.ref(
+        cls.invoice_line_account = cls.env['account.account'].search(
+            [('user_type_id', '=', cls.env.ref(
                 'account.data_account_type_revenue').id)],
             limit=1).id
-        self.journal = self.env['account.journal'].search(
+        cls.journal = cls.env['account.journal'].search(
             [('type', '=', 'bank'),
-             '|', ('company_id', '=', self.env.user.company_id.id),
+             '|', ('company_id', '=', cls.env.user.company_id.id),
              ('company_id', '=', False)], limit=1
         )
-        self.inbound_mode.variable_journal_ids = self.journal
-        self.inbound_order = self.env['account.payment.order'].create({
+        cls.inbound_mode.variable_journal_ids = cls.journal
+        # Make sure no others orders are present
+        cls.domain = [
+            ('state', '=', 'draft'),
+            ('payment_type', '=', 'inbound'),
+        ]
+        cls.payment_order_obj = cls.env['account.payment.order']
+        cls.payment_order_obj.search(cls.domain).unlink()
+        # Create payment order
+        cls.inbound_order = cls.env['account.payment.order'].create({
             'payment_type': 'inbound',
-            'payment_mode_id': self.inbound_mode.id,
-            'journal_id': self.journal.id,
+            'payment_mode_id': cls.inbound_mode.id,
+            'journal_id': cls.journal.id,
         })
-        self.invoice = self._create_customer_invoice()
+        # Open invoice
+        cls.invoice = cls._create_customer_invoice()
+        cls.invoice.action_invoice_open()
+        # Add to payment order using the wizard
+        cls.env['account.invoice.payment.line.multi'].with_context(
+            active_model='account.invoice',
+            active_ids=cls.invoice.ids
+        ).create({}).run()
 
-    def _create_customer_invoice(self):
-        invoice_account = self.env['account.account'].search(
-            [('user_type_id', '=', self.env.ref(
+    @classmethod
+    def _create_customer_invoice(cls):
+        invoice_account = cls.env['account.account'].search(
+            [('user_type_id', '=', cls.env.ref(
                 'account.data_account_type_receivable').id)],
             limit=1).id
-        invoice = self.env['account.invoice'].create({
-            'partner_id': self.env.ref('base.res_partner_4').id,
+        invoice = cls.env['account.invoice'].create({
+            'partner_id': cls.env.ref('base.res_partner_4').id,
             'account_id': invoice_account,
             'type': 'out_invoice',
-            'payment_mode_id': self.inbound_mode.id
+            'payment_mode_id': cls.inbound_mode.id
         })
-
-        self.env['account.invoice.line'].create({
-            'product_id': self.env.ref('product.product_product_4').id,
+        cls.env['account.invoice.line'].create({
+            'product_id': cls.env.ref('product.product_product_4').id,
             'quantity': 1.0,
             'price_unit': 100.0,
             'invoice_id': invoice.id,
             'name': 'product that cost 100',
-            'account_id': self.invoice_line_account,
+            'account_id': cls.invoice_line_account,
         })
 
         return invoice
